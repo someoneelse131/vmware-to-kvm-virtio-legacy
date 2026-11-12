@@ -13,7 +13,7 @@ The procedure is the same: a custom **WinPE ISO** injects the VirtIO drivers (di
 
 | OS | Build | Driver source | Status |
 |---|---|---|---|
-| Windows Server 2012 R2 | 9600 | virtio-win **0.1.215**, folder `2k12R2` | in development, test pending |
+| Windows Server 2012 R2 | 9600 | virtio-win **0.1.215**, folder `2k12R2` | in development; first test OK (2026-11-12: boots on HPE VM Essentials, disk + network drivers loaded) |
 | Windows Server 2008 R2 SP1 | 7601 | virtio-win **0.1.302**, folder `2k8R2` | in development, test pending (with CriticalDeviceDatabase entries) |
 | Windows Server 2012 (not R2) | 9200 | virtio-win 0.1.215, folder `2k12` | not planned |
 | Windows Server 2016–2025 | | | use [vmware-to-kvm-virtio](https://github.com/someoneelse131/vmware-to-kvm-virtio) |
