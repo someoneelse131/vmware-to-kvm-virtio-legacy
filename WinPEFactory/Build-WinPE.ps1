@@ -15,8 +15,8 @@ Notes:
 - Copy errors abort the build; icacls by SID (language independent); orphaned mounts are cleaned up
 - "Press any key" is kept (bootfix.bin, efisys.bin): after success the reboot falls through to Windows without a key press
 
-LEGACY VARIANT - WORK IN PROGRESS: identical to vmware-to-kvm-virtio, only the ISO name differs
-(Virtio-Drivers-Legacy.iso), so both ISOs can exist side by side.
+LEGACY VARIANT - WORK IN PROGRESS: same as vmware-to-kvm-virtio, except the ISO name
+(Virtio-Drivers-Legacy.iso, so both ISOs can exist side by side) and clearer ADK error messages.
 #>
 
 # ==========================================================
