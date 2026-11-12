@@ -1,14 +1,16 @@
 # LEGACY VARIANT - WORK IN PROGRESS, not tested yet.
-# Same procedure as vmware-to-kvm-virtio, but for Windows Server 2012 R2 (Build 9600).
-# Drivers come from virtio-win 0.1.215: the last version whose 2k12R2 drivers are
-# production-signed (Red Hat + Microsoft cross root). From 0.1.217 on they are only test-signed.
-# Windows Server 2008 R2 is planned, but not mapped yet.
+# Same procedure as vmware-to-kvm-virtio, but for Windows Server 2012 R2 (Build 9600)
+# and Windows Server 2008 R2 SP1 (Build 7601).
+# - 2012 R2: drivers from virtio-win 0.1.215, the last version whose 2k12R2 drivers are
+#   production-signed (Red Hat + Microsoft cross root). From 0.1.217 on they are only test-signed.
+# - 2008 R2: drivers from virtio-win 0.1.302 (2k8R2, production-signed, SHA-1).
+#   2008 R2 also needs CriticalDeviceDatabase entries, see section "2008 R2: CRITICAL DEVICE DATABASE".
 #
 # Notes:
 # - netkvm (network driver) added; "all drivers" = @() instead of ""
 # - Selected driver missing (folder or Windows version) -> error instead of silently skipped
 # - X: (WinPE itself) is skipped when searching for Windows; multiple Windows volumes -> error
-# - Only Server 2012 R2 (2016-2025: use vmware-to-kvm-virtio); no /ForceUnsigned
+# - Only Server 2008 R2 and 2012 R2 (2016-2025: use vmware-to-kvm-virtio); no /ForceUnsigned
 # - Build not readable -> error; old marker files are deleted at the start
 # - Success: reboot (not shutdown), so Windows is running again (the migration needs the VM running).
 #   The reboot passes the "Press any key to boot from CD" prompt without a key press and boots Windows.
@@ -245,10 +247,11 @@ if (-not $BUILD) {
 # ==================================================
 # MAP BUILD
 # ==================================================
-# 2012 R2 only. The VirtIO folder must contain the 2k12R2 drivers from virtio-win 0.1.215
-# (newer versions are only test-signed -> boot driver is not loaded, VM does not boot).
+# 2k12R2 must come from virtio-win 0.1.215 (newer versions are only test-signed ->
+# boot driver is not loaded, VM does not boot). 2k8R2 comes from virtio-win 0.1.302.
 # 2016-2025 are not mapped on purpose: they belong to vmware-to-kvm-virtio (current drivers).
 $map = @{
+    "7601" = "2k8R2"
     "9600" = "2k12R2"
 }
 
@@ -332,10 +335,100 @@ Get-ChildItem $VIRTIO_ROOT -Directory | ForEach-Object {
 }
 
 # ==================================================
+# 2008 R2: CRITICAL DEVICE DATABASE
+# ==================================================
+# Windows 7 / 2008 R2 find their boot driver through the CriticalDeviceDatabase
+# (Windows 8 and later no longer use it). Without an entry for the VirtIO disk,
+# the VM gets a blue screen 0x7B on KVM. Whether DISM writes these entries offline
+# is not documented, so we set them ourselves, the same way virt-v2v does
+# (libguestfs-common, mlcustomize/inject_virtio_win.ml): one key per PCI ID
+# (legacy + modern device) and the service values of the driver.
+if ($BUILD -eq "7601" -and -not $ERRORFLAG) {
+
+    Log "2008 R2: writing CriticalDeviceDatabase entries..."
+
+    reg load HKLM\OFFLINE_SYSTEM "$WINDRV\Windows\System32\Config\SYSTEM" | Out-Null
+
+    if ($LASTEXITCODE -ne 0) {
+        Log "ERROR: reg load of the SYSTEM hive failed"
+        $ERRORFLAG = $true
+    } else {
+
+        # The active control set is in Select\Current (normally 1 -> ControlSet001)
+        $sel = reg query "HKLM\OFFLINE_SYSTEM\Select" /v Current
+        $cur = 0
+        if ($sel) { $cur = [int](($sel | Select-String "Current").ToString().Trim().Split()[-1]) }
+
+        if ($cur -lt 1) {
+            Log "ERROR: active control set not readable (Select\Current)"
+            $ERRORFLAG = $true
+        } else {
+            $cs = "HKLM\OFFLINE_SYSTEM\ControlSet{0:D3}" -f $cur
+            Log "Using control set $cs"
+
+            $scsiClass = "{4D36E97B-E325-11CE-BFC1-08002BE10318}"
+            $cdd = [ordered]@{
+                "VEN_1AF4&DEV_1001&REV_00" = "viostor"
+                "VEN_1AF4&DEV_1042&REV_01" = "viostor"
+                "VEN_1AF4&DEV_1004&REV_00" = "vioscsi"
+                "VEN_1AF4&DEV_1048&REV_01" = "vioscsi"
+            }
+
+            # Each reg add returns exit code 0 on success
+            $regs = @()
+            foreach ($id in $cdd.Keys) {
+                $key = "$cs\Control\CriticalDeviceDatabase\PCI#$id"
+                $regs += ,@($key, "Service",   "REG_SZ", $cdd[$id])
+                $regs += ,@($key, "ClassGUID", "REG_SZ", $scsiClass)
+            }
+            foreach ($svc in "viostor", "vioscsi") {
+                $key = "$cs\Services\$svc"
+                $regs += ,@($key, "Type",         "REG_DWORD",     "1")
+                $regs += ,@($key, "Start",        "REG_DWORD",     "0")
+                $regs += ,@($key, "ErrorControl", "REG_DWORD",     "1")
+                $regs += ,@($key, "Group",        "REG_SZ",        "SCSI miniport")
+                $regs += ,@($key, "ImagePath",    "REG_EXPAND_SZ", "system32\drivers\$svc.sys")
+            }
+
+            foreach ($r in $regs) {
+                reg add $r[0] /v $r[1] /t $r[2] /d $r[3] /f | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                    Log "ERROR: reg add $($r[0]) $($r[1]) failed"
+                    $ERRORFLAG = $true
+                }
+            }
+            if (-not $ERRORFLAG) { Log "CriticalDeviceDatabase and service entries written" }
+        }
+
+        # Without a clean unload the changes may not be written to the hive file
+        reg unload HKLM\OFFLINE_SYSTEM | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            Log "ERROR: reg unload of the SYSTEM hive failed"
+            $ERRORFLAG = $true
+        }
+    }
+
+    # ImagePath points to System32\drivers: DISM normally copies boot drivers there,
+    # if not -> copy the .sys file from the driver folder (virt-v2v does the same)
+    foreach ($svc in "viostor", "vioscsi") {
+        $sys = "$WINDRV\Windows\System32\drivers\$svc.sys"
+        if (-not (Test-Path $sys)) {
+            Copy-Item (Join-Path $VIRTIO_ROOT "$svc\$OSVER\amd64\$svc.sys") $sys -Force
+            if (Test-Path $sys) {
+                Log "Copied $svc.sys to System32\drivers"
+            } else {
+                Log "ERROR: $svc.sys missing in System32\drivers"
+                $ERRORFLAG = $true
+            }
+        }
+    }
+}
+
+# ==================================================
 # RESULT
 # ==================================================
 if ($ERRORFLAG) {
-    Fail "Completed with ERRORS (see $DISMLOG)" $LOGDIR
+    Fail "Completed with ERRORS (see $LOGFILE and $DISMLOG)" $LOGDIR
 }
 
 Log "Completed successfully"
