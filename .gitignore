@@ -1,0 +1,6 @@
+# VirtIO drivers are downloaded separately (see README, step A3)
+WinPEFactory/FilesToCopy/VirtIO/*
+!WinPEFactory/FilesToCopy/VirtIO/.gitkeep
+
+# Build output
+*.iso
