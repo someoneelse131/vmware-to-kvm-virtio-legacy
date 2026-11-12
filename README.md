@@ -24,13 +24,12 @@ The procedure is the same: a custom **WinPE ISO** injects the VirtIO drivers (di
 
 **2008 R2 needs more than DISM.** Windows 7 / 2008 R2 find their boot driver through the `CriticalDeviceDatabase` (Windows 8 and later no longer use it). `driver_injection.ps1` therefore writes these entries for viostor and vioscsi itself, the same way virt-v2v does (`libguestfs-common`, `mlcustomize/inject_virtio_win.ml`).
 
-**Add-ons: planned, not available yet.** The add-ons of the main repo do **not** work on 2012 R2: they require PowerShell 5.1 (2012 R2 has 4.0), and `virtio-win-gt-x64.msi` refuses to install before Windows 10. Two lean add-ons for 2012 R2 are planned:
-- **Prepare (lite):** VirtIO check, remove `StartOverride`, save the static IP and restore it automatically on the first boot on KVM, copy the cleanup files. Replaces the manual step 3.
-- **Cleanup (lite):** uninstall VMware Tools, install the remaining VirtIO drivers (`pnputil`) and the QEMU Guest Agent.
+**Optional add-ons, 2012 R2 only (not tested yet).** Lean versions of the add-ons of the main repo. Those do **not** work on 2012 R2: they require PowerShell 5.1 (2012 R2 has 4.0), and `virtio-win-gt-x64.msi` refuses to install before Windows 10.
+- **`Prepare-KvmMigration.ps1`**, run before the migration: it checks the injection and removes `StartOverride`. It restores the static IP automatically on the first boot on KVM, and it places the files for the cleanup.
+- **`Cleanup-AfterMigration.ps1`**, run after the migration: it installs the remaining VirtIO drivers (`pnputil`) and the QEMU Guest Agent, and removes VMware Tools.
 
-Not planned: SAN policy / bringing disks online, phantom devices. For 2008 R2 (PowerShell 2.0) only the driver injection is planned; network and cleanup are done manually.
-
-Until the add-ons exist, the check before the migration (step 3) is done manually.
+Not done: SAN policy / bringing disks online, phantom devices. Both add-ons stop on any build other than 9600.
+**2008 R2 (PowerShell 2.0, WinRM usually off): no add-ons.** Only the driver injection; check, network and cleanup are done manually.
 
 ---
 
@@ -38,12 +37,16 @@ Until the add-ons exist, the check before the migration (step 3) is done manuall
 
 ```
 vmware-to-kvm-virtio-legacy\
-└─ WinPEFactory\                       copy to C:\WinPEFactory-Legacy
-   ├─ Build-WinPE.ps1                  builds the ISO
-   ├─ startnet.cmd                     WinPE autostart
-   └─ FilesToCopy\
-      ├─ driver_injection.ps1          injects the drivers
-      └─ VirtIO\                       (only .gitkeep, drivers go here in step A3)
+├─ WinPEFactory\                       copy to C:\WinPEFactory-Legacy
+│  ├─ Build-WinPE.ps1                  builds the ISO
+│  ├─ startnet.cmd                     WinPE autostart
+│  └─ FilesToCopy\
+│     ├─ driver_injection.ps1          injects the drivers
+│     └─ VirtIO\                       (only .gitkeep, drivers go here in step A3)
+└─ AddOns\                             OPTIONAL, 2012 R2 only
+   ├─ Prepare-KvmMigration.ps1         runs on the admin PC / jump host
+   └─ PostMigrationFiles\
+      └─ Cleanup-AfterMigration.ps1    runs on the server (+ MSI and drivers, see "Add-on: Cleanup")
 ```
 
 Windows blocks scripts downloaded from the internet. Unblock them once after downloading:
@@ -110,11 +113,12 @@ Same steps as in the main repo. Take a snapshot first. While this is in developm
 |---|---|---|
 | 1 | VMware | Shut down the VM, attach the ISO, force entry into the EFI/BIOS setup for the next boot, boot from CD and **press a key at "Press any key to boot from CD"**. |
 | 2 | VMware (console) | WinPE injects the drivers and **reboots**. **Do not press a key**, so Windows starts normally. On a red **FAILED** message, read it first, then reset the VM without pressing a key. Disconnect the ISO afterwards. |
-| 3 | Server | Check the injection (commands below), after the **last** reboot on VMware. On 2012 R2 also remove `StartOverride`. |
-| 4 | Migration tool | Migrate the VM (e.g. Zerto). |
-| 5 | KVM | Check that the VM boots, set the IP on the new VirtIO adapter manually, fix the VLAN if needed. Bring additional disks online if needed (not shared cluster disks). |
+| 3 | Server | Check the injection after the **last** reboot on VMware. On 2012 R2 also remove `StartOverride`: use **either** the add-on `Prepare-KvmMigration.ps1` **or** the commands below. On 2008 R2: the commands below. |
+| 4 | Migration tool | Migrate the VM (e.g. Zerto). With the add-on, do **not** let the tool change the IP (no re-IP). |
+| 5 | KVM | Check that the VM boots. Set the IP on the new VirtIO adapter manually, or let the add-on do it (2012 R2). Fix the VLAN if needed. Bring additional disks online if needed (not shared cluster disks). |
+| 6 | KVM | Finalize the migration (e.g. commit in Zerto). Then, on 2012 R2, optionally run `Cleanup-AfterMigration.ps1`. On 2008 R2 the cleanup is manual. |
 
-Step 3 on **2012 R2**, on the server as administrator (works with PowerShell 4.0). Every reboot on VMware can set `StartOverride` again (seen on 2016+, still to be confirmed on 2012 R2), and there is no add-on task that removes it. So run this again after **each** reboot on VMware, directly before the migration:
+Step 3 on **2012 R2** without the add-on, on the server as administrator (works with PowerShell 4.0). Every reboot on VMware can set `StartOverride` again (seen on 2016+, still to be confirmed on 2012 R2), and without the add-on task nothing removes it. So run this again after **each** reboot on VMware, directly before the migration:
 ```powershell
 Test-Path C:\virtio-inject\completed.txt                       # must be True
 'viostor', 'vioscsi' | ForEach-Object {
@@ -136,7 +140,45 @@ dism /online /get-drivers | findstr /i netkvm
 ```
 Expected: `SUCCESS`; `Start` = `0x0` twice; at least these 4 keys: `PCI#VEN_1AF4&DEV_1001&REV_00`, `..._1042&REV_01`, `..._1004&REV_00`, `..._1048&REV_01`; at least one line with `netkvm`. If something is missing: do **not** migrate.
 
-Logs: `C:\virtio-inject\inject.log` and `dism.log`, same as in the main repo. If WinPE does not find Windows, the log exists only inside WinPE (`X:\virtio-ram.log`) and is lost on reboot. Read the console before you reset the VM.
+Logs: `C:\virtio-inject\inject.log` and `dism.log`, same as in the main repo. If WinPE does not find Windows, the log exists only inside WinPE (`X:\virtio-ram.log`) and is lost on reboot. Read the console before you reset the VM. The add-ons also write `Restore-NetConfig.log` and `Cleanup-AfterMigration.log` to `C:\virtio-inject`.
+
+---
+
+## Add-on: Prepare-KvmMigration.ps1 (2012 R2)
+
+Run it on the admin PC / jump host (Windows PowerShell 5.1) after step 2 and before the migration: `.\Prepare-KvmMigration.ps1 -ComputerName <SERVER>`.
+
+- **VirtIO check:** `completed.txt`, `Start` = 0 for viostor/vioscsi, netkvm in the driver store; removes `StartOverride`. If the check fails, the script stops: do **not** migrate, repeat steps 1–2.
+- **IP restore:** if there is exactly one adapter with a static IPv4, the script saves the IP and registers the scheduled task `VirtIO-Restore-NetConfig`. On the first boot on KVM the task sets the IP and then deletes itself. On every boot on VMware it removes `StartOverride` again. DHCP: nothing to save. Other cases: the values are shown and saved, set the IP manually. **Without a working task**, run Prepare again after the last reboot on VMware. A copy of the values is kept in `NetConfig\` next to the script.
+- **Cleanup files:** copies everything in `PostMigrationFiles\` to `C:\virtio-inject` on the server (via WinRM, no file share needed). Put the MSI and the drivers there first (see below), otherwise there is only a warning.
+
+Requirements: WinRM from the admin PC to the server works (`Test-WSMan <SERVER>`), and you have admin rights on the server. To use another account, add `-Credential (Get-Credential)`.
+
+## Add-on: Cleanup-AfterMigration.ps1 (2012 R2)
+
+It needs files from virtio-win **0.1.215** (the same ISO as in A3): the drivers Balloon, vioserial, viorng, fwcfg, pvpanic (only the `2k12R2\amd64` folders, every `.inf` below `Drivers\` is installed) and `guest-agent\qemu-ga-x86_64.msi` (from the same ISO as the drivers; newer versions are not tested on 2012 R2). Put them into `PostMigrationFiles\` once, in Windows PowerShell 5.1:
+```powershell
+$iso = "$env:USERPROFILE\Downloads\virtio-win-0.1.215.iso"            # adjust paths
+$dst = "C:\vmware-to-kvm-virtio-legacy\AddOns\PostMigrationFiles"
+$img = Mount-DiskImage -ImagePath $iso -PassThru -ErrorAction Stop
+$src = "$((Get-Volume -DiskImage $img).DriveLetter):"
+foreach ($drv in "Balloon", "vioserial", "viorng", "fwcfg", "pvpanic") {
+    robocopy "$src\$drv\2k12R2\amd64" "$dst\Drivers\$drv" /E /XF *.pdb /NFL /NDL /NJH /NJS
+    if ($LASTEXITCODE -ge 8) { Write-Host "ERROR at $drv" -ForegroundColor Red }
+}
+Copy-Item "$src\guest-agent\qemu-ga-x86_64.msi" $dst -Force
+Dismount-DiskImage -ImagePath $iso | Out-Null
+(Get-ChildItem "$dst\Drivers" -Recurse -File).Count                   # must be 22
+(Get-ChildItem "$dst\Drivers" -Recurse -Filter *.inf).Count           # must be 5
+Test-Path "$dst\qemu-ga-x86_64.msi"                                   # must be True
+```
+Without Prepare, copy the script, the MSI and `Drivers\` to `C:\virtio-inject` on the server manually.
+
+Run it on the server (console of the target or RDP, as administrator) **after** the migration is final (step 6):
+```
+powershell -ExecutionPolicy Bypass -File C:\virtio-inject\Cleanup-AfterMigration.ps1
+```
+It stops if the VM still runs on VMware or is not 2012 R2. It installs the drivers and the QEMU Guest Agent, uninstalls VMware Tools and removes the leftover folder. It only reports the AC'97 sound card (disable it by hand). Windows may ask whether to trust Red Hat: tick "Always trust" and install. No automatic reboot. It can run again; if VMware Tools need a reboot, reboot and run it again.
 
 ---
 

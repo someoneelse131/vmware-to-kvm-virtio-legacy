@@ -4,3 +4,13 @@ WinPEFactory/FilesToCopy/VirtIO/*
 
 # Build output
 *.iso
+
+# Saved network configurations of Prepare-KvmMigration.ps1 (real IP addresses)
+NetConfig/
+
+# Add-ons: QEMU Guest Agent MSI and VirtIO drivers are downloaded separately (see README)
+*.msi
+AddOns/PostMigrationFiles/Drivers/
+
+# Tooling
+.claude-flow/
