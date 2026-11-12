@@ -47,7 +47,14 @@ Get-ChildItem <download folder> -Recurse | Unblock-File
 
 On a Windows admin PC, in **Windows PowerShell 5.1 as Administrator**.
 
-**A1. Windows ADK + WinPE add-on:** same as in the main repo (ADK for Windows Server 2025, 10.1.26100.x). The current WinPE can service 2012 R2 images offline (Microsoft: "DISM Supported Platforms").
+**A1. Install the Windows ADK:** first the ADK itself (the feature "Deployment Tools" is enough), then the **separate** "WinPE add-on". Pick the ADK version for Windows Server 2025 (10.1.26100.x). The current WinPE can service 2012 R2 images offline (Microsoft: "DISM Supported Platforms").
+Download: https://learn.microsoft.com/windows-hardware/get-started/adk-install
+Check (both must be True). If you installed it to a non-default path, adjust `$ADKPath` in `Build-WinPE.ps1`:
+```powershell
+$adk = "C:\Program Files (x86)\Windows Kits\10\Assessment and Deployment Kit"
+Test-Path "$adk\Windows Preinstallation Environment\copype.cmd"      # WinPE add-on
+Test-Path "$adk\Deployment Tools\amd64\Oscdimg\oscdimg.exe"         # Deployment Tools
+```
 
 **A2. Copy the `WinPEFactory` folder to `C:\WinPEFactory-Legacy`.** Use a separate folder so that the drivers of the main repo are not mixed with these. The ISO is written to `C:\WinPE_Builds\Virtio-Drivers-Legacy.iso`.
 
@@ -70,7 +77,7 @@ Get-ChildItem $dst -Recurse -File | Measure-Object Length -Sum |
     Test-Path "$dst\$_\2k12R2\amd64\$_.inf" }                # must be True, True, True
 ```
 
-**A4. Build the ISO:** `C:\WinPEFactory-Legacy\Build-WinPE.ps1`
+**A4. Build the ISO:** `powershell -ExecutionPolicy Bypass -File C:\WinPEFactory-Legacy\Build-WinPE.ps1`
 
 ---
 
@@ -86,7 +93,7 @@ Same steps as in the main repo. Take a snapshot first. While this is in developm
 | 4 | Migration tool | Migrate the VM (e.g. Zerto). |
 | 5 | KVM | Check that the VM boots, set the IP on the new VirtIO adapter manually, fix the VLAN if needed. Bring additional disks online if needed (not shared cluster disks). |
 
-Step 3, on the server as administrator (works with PowerShell 4.0). Every reboot on VMware can set `StartOverride` again, and there is no add-on task that removes it. So run this again after **each** reboot on VMware, directly before the migration:
+Step 3, on the server as administrator (works with PowerShell 4.0). Every reboot on VMware can set `StartOverride` again (seen on 2016+, still to be confirmed on 2012 R2), and there is no add-on task that removes it. So run this again after **each** reboot on VMware, directly before the migration:
 ```powershell
 Test-Path C:\virtio-inject\completed.txt                       # must be True
 'viostor', 'vioscsi' | ForEach-Object {

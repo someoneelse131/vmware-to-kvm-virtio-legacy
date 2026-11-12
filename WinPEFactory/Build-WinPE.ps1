@@ -87,11 +87,12 @@ if (Test-Path $WorkDir) {
 # CREATE WINPE
 # ==========================================================
 
+# copype.cmd comes with the separate WinPE add-on, oscdimg.exe with the ADK feature "Deployment Tools"
 if (!(Test-Path $copype)) {
-    throw "copype.cmd not found"
+    throw "copype.cmd not found: $copype - is the WinPE add-on installed (separate download)? Otherwise adjust `$ADKPath."
 }
 if (!(Test-Path $Oscdimg)) {
-    throw "oscdimg.exe not found"
+    throw "oscdimg.exe not found: $Oscdimg - is the ADK feature 'Deployment Tools' installed? Otherwise adjust `$ADKPath."
 }
 
 $cmd = "`"$envScript`" && `"$copype`" $Arch `"$WorkDir`""
