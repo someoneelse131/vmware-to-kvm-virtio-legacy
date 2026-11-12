@@ -20,7 +20,7 @@ The procedure is the same: a custom **WinPE ISO** injects the VirtIO drivers (di
 
 **Why 0.1.215?** It is the last virtio-win version whose 2012 R2 drivers are production-signed (Red Hat, Microsoft cross-signed, SHA-256). From 0.1.217 on, they are only signed with a test certificate, and Windows does not load them as boot drivers.
 
-**Add-ons are not available yet.** `Prepare-KvmMigration.ps1` and `Cleanup-AfterMigration.ps1` from the main repo do **not** work on 2012 R2: they require PowerShell 5.1 (2012 R2 has 4.0), and `virtio-win-gt-x64.msi` refuses to install before Windows 10.
+**Scope: driver injection only.** No add-ons are planned for the legacy variant. `Prepare-KvmMigration.ps1` and `Cleanup-AfterMigration.ps1` from the main repo do **not** work on 2012 R2: they require PowerShell 5.1 (2012 R2 has 4.0), and `virtio-win-gt-x64.msi` refuses to install before Windows 10. The check before the migration (step 3) is done manually.
 
 ---
 
